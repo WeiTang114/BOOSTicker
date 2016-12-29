@@ -11,16 +11,49 @@ import datetime
 import os
 import os.path as osp
 import urllib
+import datetime
 from PIL import Image
 from images2gif import writeGif
 from utils import mkdir_p
 
 INIT = './stickerbot.ini'
+DEFAULT_SPEED = 2.0
 
 class StickerBot(fbchat.Client):
 
-    def __init__(self,email, password, debug=True, user_agent=None):
+    def __init__(self,email, password, logfile, debug=True, user_agent=None):
         fbchat.Client.__init__(self,email, password, debug, user_agent)
+        self.logfile = logfile
+        self.user_configs_file = './users_confs.txt'
+        self.user_configs = self._load_userconfs()
+        print 'init: user conig', self.user_configs
+
+    def _load_userconfs(self):
+        d = {}
+        if not os.path.exists(self.user_configs_file):
+            open(self.user_configs_file, 'w+').close()
+            return d
+        with open(self.user_configs_file, 'r') as f:
+            for l in f:
+                print l.strip()
+                if not l.strip():
+                    continue
+                uid, is_group, speed = l.strip().split(',')
+                is_group = bool(int(is_group))
+                speed = float(speed)
+                d[uid] = [is_group, speed]
+        return d
+
+    def _add_user_config(self, uid, is_group, speed):
+        self.user_configs[uid] = [is_group, speed]
+        self._write_userconfs()
+
+    def _write_userconfs(self):
+        print 'write_confs',
+        with open(self.user_configs_file, 'w+') as f:
+            for uid in self.user_configs:
+                is_group, speed = self.user_configs[uid]
+                print>>f, '%s,%d,%f' % (uid, int(is_group), float(speed))
 
     def on_message(self, mid, author_id, author_name, message, metadata):
         self.markAsDelivered(author_id, mid) #mark delivered
@@ -56,31 +89,61 @@ class StickerBot(fbchat.Client):
     def _handle(self, rcpt_id, is_group, msg, msg_type='user'):
         # parsed = json.loads(msg) 
         # print json.dumps(msg, indent=4, sort_keys=True)
+        if not rcpt_id in self.user_configs:
+            self._add_user_config(rcpt_id, is_group, DEFAULT_SPEED)
+
         reply = None
+
         if msg.is_sticker():
             print 'is sticker!'
-            print 'returning:'
-            # reply = 'sticker!\n' + str(msg.sticker)
-            
+            print msg.sticker.n_columns, msg.sticker.n_rows
+
             sticker = msg.sticker
             folder = osp.join('./stickers', sticker.pack_id, sticker.sticker_id)
-            tb_path, big_path = self._download(sticker, folder)
+            tb_path, big_path = self._get_or_download(sticker, folder)
             if sticker.dynamic:
                 framepaths, frames = self._split_dynamic_sticker(sticker, big_path, folder)
-                # self.sendLocalImage(rcpt_id, message='', image=framepaths[0]) 
                 gif_path = osp.join(folder, 'hey.gif')
-                writeGif(gif_path, frames, duration=1. / sticker.frame_rate, dither=0, dispose=2)
+                speed = self.user_configs[rcpt_id][1]
+                print 'speed:', speed, ' framerate:', sticker.frame_rate
+                
+                if osp.isfile(gif_path):
+                    os.remove(gif_path)
+                
+                # FIXME
+                # duration works very weird so always return 2.0
+                speed = 2.0
+                writeGif(gif_path, frames, duration=1. / sticker.frame_rate * speed, dither=1, dispose=2)
                 self.sendLocalImage(rcpt_id, message='', image=gif_path, message_type=msg_type) 
-            
+                self.log('sent to %s, is_group=%d, packid=%s, stickerid=%s' % (rcpt_id, is_group, sticker.pack_id, sticker.sticker_id))
+
+        elif msg.text.startswith('speed'):
+            speed = self.user_configs[rcpt_id][1]
+            try:
+                if len(msg.text.strip().split()) > 1:
+                    arg = msg.text.strip().split()[1]
+                    if arg == 'up':
+                        speed *= 2. 
+                    elif arg == 'down':
+                        speed *= 0.5
+                    elif float(arg) != 0:
+                        speed = float(arg)
+                self._add_user_config(rcpt_id, is_group, speed)
+                reply = '速度: %fX' % speed
+            except Exception, e:
+                print str(e)
+                reply = '格式: speed <up/down/0.8>'
         return reply
     
-    def _download(self, sticker, folder):
+    def _get_or_download(self, sticker, folder):
         mkdir_p(folder)
         thumbnail_path = osp.join(folder, 'static.png')
-        urllib.urlretrieve(sticker.static_url, thumbnail_path)
+        if not osp.isfile(thumbnail_path):
+            urllib.urlretrieve(sticker.static_url, thumbnail_path)
         if sticker.dynamic:
             big_path = osp.join(folder, 'big.png')
-            urllib.urlretrieve(sticker.url, big_path)
+            if not osp.isfile(big_path):
+                urllib.urlretrieve(sticker.url, big_path)
         return thumbnail_path, big_path
 
     def _split_dynamic_sticker(self, sticker, big_path, folder):
@@ -92,20 +155,30 @@ class StickerBot(fbchat.Client):
         k = 1
         croppeds = []
         paths = []
-        for i in range(0, h, h_split):
-            for j in range(0, w, w_split):
-                box = (j, i, j + w_split, i + h_split)
+        for i in range(n_row):
+            for j in range(n_col):
+                left = j * h_split
+                top = i * w_split
+                box = (left, top, left + w_split, top + h_split)
                 s = im.crop(box)
-                s.load()
                 mkdir_p(folder)
                 path = osp.join(folder, '%02d.png' % k)
-                s.save(path)
+                if not osp.isfile(path):
+                    s.save(path)
+
                 croppeds.append(s)
                 paths.append(path)
                 k += 1
                 if k > sticker.frame_count:
                     return (paths, croppeds)
+            
         
+    def log(self, msg):
+        if not osp.isfile(self.logfile):
+            open(self.logfile, 'w+').close()
+        timestr = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(self.logfile, 'a') as f:
+            print>>f, '[%s] %s' % (timestr, msg)
 
 class Message:
     def __init__(self, mid, author_id, author_name, message, metadata_delta):
@@ -143,7 +216,7 @@ class Sticker:
         self.url = m['spriteURI'] or ''
         self.sticker_id = str(m['stickerID'])
         self.frame_count = m['frameCount']
-        self.frame_rate = m['frameRate']
+        self.frame_rate = float(m['frameRate'])
         self.n_columns = m['framesPerRow']
         self.n_rows = m['framesPerCol']
         self.w, self.h = m['width'], m['height']
@@ -166,7 +239,8 @@ def main():
     
     email = config.get('Basic', 'email')
     password = config.get('Basic', 'password')
-    bot = StickerBot(email, password)
+    logfile = config.get('Basic', 'logfile')
+    bot = StickerBot(email, password, logfile)
 
     # block here: listen to messages
     bot.listen()
