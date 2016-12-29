@@ -1,0 +1,6 @@
+stickerbot.ini
+
+*.swo
+*.swn
+*.swp
+*.pyc
