@@ -12,6 +12,7 @@ import os
 import os.path as osp
 import urllib
 from PIL import Image
+from images2gif import writeGif
 from utils import mkdir_p
 
 INIT = './stickerbot.ini'
@@ -59,14 +60,17 @@ class StickerBot(fbchat.Client):
         if msg.is_sticker():
             print 'is sticker!'
             print 'returning:'
-            reply = 'sticker!\n' + str(msg.sticker)
+            # reply = 'sticker!\n' + str(msg.sticker)
             
             sticker = msg.sticker
             folder = osp.join('./stickers', sticker.pack_id, sticker.sticker_id)
             tb_path, big_path = self._download(sticker, folder)
             if sticker.dynamic:
-                frames = self._split_dynamic_sticker(sticker, big_path, folder)
-                self.sendLocalImage(rcpt_id, message='', image=big_path) 
+                framepaths, frames = self._split_dynamic_sticker(sticker, big_path, folder)
+                # self.sendLocalImage(rcpt_id, message='', image=framepaths[0]) 
+                gif_path = osp.join(folder, 'hey.gif')
+                writeGif(gif_path, frames, duration=1. / sticker.frame_rate, dither=0, dispose=2)
+                self.sendLocalImage(rcpt_id, message='', image=gif_path, message_type=msg_type) 
             
         return reply
     
@@ -87,16 +91,20 @@ class StickerBot(fbchat.Client):
         w_split, h_split = w / n_col, h / n_row
         k = 1
         croppeds = []
+        paths = []
         for i in range(0, h, h_split):
             for j in range(0, w, w_split):
                 box = (j, i, j + w_split, i + h_split)
                 s = im.crop(box)
+                s.load()
                 mkdir_p(folder)
-                s.save(osp.join(folder, '%02d.png' % k))
+                path = osp.join(folder, '%02d.png' % k)
+                s.save(path)
                 croppeds.append(s)
+                paths.append(path)
                 k += 1
                 if k > sticker.frame_count:
-                    return croppeds
+                    return (paths, croppeds)
         
 
 class Message:
@@ -136,8 +144,8 @@ class Sticker:
         self.sticker_id = str(m['stickerID'])
         self.frame_count = m['frameCount']
         self.frame_rate = m['frameRate']
-        self.n_columns = m['framesPerCol']
-        self.n_rows = m['framesPerRow']
+        self.n_columns = m['framesPerRow']
+        self.n_rows = m['framesPerCol']
         self.w, self.h = m['width'], m['height']
         self.pack_id = str(m['packID'])
         self.dynamic = (m['frameCount'] > 1)
