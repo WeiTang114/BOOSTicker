@@ -9,6 +9,10 @@ import ConfigParser
 import fbchat
 import datetime
 import os
+import os.path as osp
+import urllib
+from PIL import Image
+from utils import mkdir_p
 
 INIT = './stickerbot.ini'
 
@@ -34,7 +38,7 @@ class StickerBot(fbchat.Client):
 
             msg = Message(mid, author_id, author_name, message, metadata['delta'])
             print 'rcpt_id', rcpt_id, 'is_group', is_group
-            replymsg = self._handle(rcpt_id, is_group, msg)
+            replymsg = self._handle(rcpt_id, is_group, msg, msg_type)
             if replymsg:
                 self.send(rcpt_id, replymsg, message_type=msg_type)
 
@@ -48,7 +52,7 @@ class StickerBot(fbchat.Client):
     def _get_threadid(self, msg_metadata):
         return msg_metadata['delta']['messageMetadata']['threadKey']['threadFbId'] 
 
-    def _handle(self, rcpt_id, is_group, msg):
+    def _handle(self, rcpt_id, is_group, msg, msg_type='user'):
         # parsed = json.loads(msg) 
         # print json.dumps(msg, indent=4, sort_keys=True)
         reply = None
@@ -56,11 +60,44 @@ class StickerBot(fbchat.Client):
             print 'is sticker!'
             print 'returning:'
             reply = 'sticker!\n' + str(msg.sticker)
-
-
+            
+            sticker = msg.sticker
+            folder = osp.join('./stickers', sticker.pack_id, sticker.sticker_id)
+            tb_path, big_path = self._download(sticker, folder)
+            if sticker.dynamic:
+                frames = self._split_dynamic_sticker(sticker, big_path, folder)
+                self.sendLocalImage(rcpt_id, message='', image=big_path) 
+            
         return reply
-        
+    
+    def _download(self, sticker, folder):
+        mkdir_p(folder)
+        thumbnail_path = osp.join(folder, 'static.png')
+        urllib.urlretrieve(sticker.static_url, thumbnail_path)
+        if sticker.dynamic:
+            big_path = osp.join(folder, 'big.png')
+            urllib.urlretrieve(sticker.url, big_path)
+        return thumbnail_path, big_path
 
+    def _split_dynamic_sticker(self, sticker, big_path, folder):
+        im = Image.open(big_path) 
+        w, h = im.size
+        n_col = sticker.n_columns
+        n_row = sticker.n_rows
+        w_split, h_split = w / n_col, h / n_row
+        k = 1
+        croppeds = []
+        for i in range(0, h, h_split):
+            for j in range(0, w, w_split):
+                box = (j, i, j + w_split, i + h_split)
+                s = im.crop(box)
+                mkdir_p(folder)
+                s.save(osp.join(folder, '%02d.png' % k))
+                croppeds.append(s)
+                k += 1
+                if k > sticker.frame_count:
+                    return croppeds
+        
 
 class Message:
     def __init__(self, mid, author_id, author_name, message, metadata_delta):
@@ -102,7 +139,7 @@ class Sticker:
         self.n_columns = m['framesPerCol']
         self.n_rows = m['framesPerRow']
         self.w, self.h = m['width'], m['height']
-        self.pack_id = m['packID']
+        self.pack_id = str(m['packID'])
         self.dynamic = (m['frameCount'] > 1)
         
     def __str__(self):
@@ -111,6 +148,9 @@ class Sticker:
         s += 'url:' + self.url
         return s
         
+    def dump(self, info_path):
+        pass
+    
 
 def main():
     config = ConfigParser.ConfigParser()
