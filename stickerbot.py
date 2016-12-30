@@ -138,6 +138,7 @@ class StickerBot(fbchat.Client):
     def _get_or_download(self, sticker, folder):
         mkdir_p(folder)
         thumbnail_path = osp.join(folder, 'static.png')
+        big_path = None
         if not osp.isfile(thumbnail_path):
             urllib.urlretrieve(sticker.static_url, thumbnail_path)
         if sticker.dynamic:
