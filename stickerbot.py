@@ -12,6 +12,7 @@ import os
 import os.path as osp
 import urllib
 import datetime
+import inspect
 from PIL import Image
 from images2gif import writeGif
 from utils import mkdir_p
@@ -115,6 +116,7 @@ class StickerBot(fbchat.Client):
                 speed = 2.0
                 writeGif(gif_path, frames, duration=1. / sticker.frame_rate * speed, dither=1, dispose=2)
                 self.sendLocalImage(rcpt_id, message='', image=gif_path, message_type=msg_type) 
+                sticker.dump(osp.join(folder, 'sticker.json'))
                 self.log('sent to %s, is_group=%d, packid=%s, stickerid=%s' % (rcpt_id, is_group, sticker.pack_id, sticker.sticker_id))
 
         elif msg.text.startswith('speed'):
@@ -142,7 +144,7 @@ class StickerBot(fbchat.Client):
         if not osp.isfile(thumbnail_path):
             urllib.urlretrieve(sticker.static_url, thumbnail_path)
         if sticker.dynamic:
-            big_path = osp.join(folder, 'big.png')
+            big_path = osp.join(folder, 'big2.png')
             if not osp.isfile(big_path):
                 urllib.urlretrieve(sticker.url, big_path)
         return thumbnail_path, big_path
@@ -214,7 +216,7 @@ class Sticker:
         m = sticker_meta
         self.meta = sticker_meta
         self.static_url = sticker_url
-        self.url = m['spriteURI'] or ''
+        self.url = m['spriteURI2x'] or ''
         self.sticker_id = str(m['stickerID'])
         self.frame_count = m['frameCount']
         self.frame_rate = float(m['frameRate'])
@@ -229,9 +231,12 @@ class Sticker:
         s += 'dynamic:' + str(self.dynamic) + '\n'
         s += 'url:' + self.url
         return s
-        
+
     def dump(self, info_path):
-        pass
+        folder = osp.dirname(info_path)
+        mkdir_p(folder)
+        with open(info_path, 'w+') as f:
+            json.dump(self.__dict__, f, indent=4, sort_keys=True)
     
 
 def main():
