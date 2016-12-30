@@ -158,8 +158,8 @@ class StickerBot(fbchat.Client):
         paths = []
         for i in range(n_row):
             for j in range(n_col):
-                left = j * h_split
-                top = i * w_split
+                left = j * w_split
+                top = i * h_split
                 box = (left, top, left + w_split, top + h_split)
                 s = im.crop(box)
                 mkdir_p(folder)
