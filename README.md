@@ -6,8 +6,7 @@ Boost all you FB stickers.
 - [fbchat](https://github.com/carpedm20/fbchat). 
   - Note that [this patch](https://github.com/carpedm20/fbchat/pull/74/files) must be appllied for **group** messaging.
   - And [this patch](https://github.com/carpedm20/fbchat/pull/77/commits/62c5ae793269dbcc4bdd5b5cb12865a6546fda15) must be applied for **client.listen()** to work.
-- [images2gif](https://bitbucket.org/bench/images2gif.py)
-  - [This fix](http://stackoverflow.com/questions/19149643/error-in-images2gif-py-with-globalpalette?answertab=active#tab-top) must be applied.
+- [ImageMagick Convert Tool](https://www.imagemagick.org/script/convert.php)
 
 # Usage
 
