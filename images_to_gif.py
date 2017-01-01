@@ -3,7 +3,6 @@ import subprocess as sp
 from PIL import Image
 import imageio
 import images2gif
-import images2gif_echomesh
 import visvis.vvmovie.images2gif as images2gif_visvis
 import moviepy 
 
@@ -30,6 +29,9 @@ def images_to_gif_imagemagick(gif_path, image_paths, duration_ms):
     sp.call(cmd)
 
 def images_to_gif_images2gif(gif_path, image_paths, duration_ms):
+    """
+    Some blocks at the edge are weird.
+    """
     ims = [Image.open(p) for p in image_paths]
     images2gif.writeGif(gif_path, ims, duration=duration_ms / 1000., dither=1, dispose=2)
 
