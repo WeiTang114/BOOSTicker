@@ -3,7 +3,6 @@ import requests
 import json
 import time
 from pprint import pprint
-# import multiprocessing as mp
 import threading as th
 import ConfigParser
 import fbchat
@@ -14,7 +13,6 @@ import urllib
 import datetime
 import inspect
 from PIL import Image
-from images2gif import writeGif
 from utils import mkdir_p
 
 INIT = './stickerbot.ini'
@@ -103,18 +101,14 @@ class StickerBot(fbchat.Client):
             folder = osp.join('./stickers', sticker.pack_id, sticker.sticker_id)
             tb_path, big_path = self._get_or_download(sticker, folder)
             if sticker.dynamic:
-                framepaths, frames = self._split_dynamic_sticker(sticker, big_path, folder)
-                gif_path = osp.join(folder, 'hey.gif')
+                framepaths = self._split_dynamic_sticker(sticker, big_path, folder)
                 speed = self.user_configs[rcpt_id][1]
+                gif_path = osp.join(folder, 'hey_%f.gif' % speed)
                 print 'speed:', speed, ' framerate:', sticker.frame_rate
                 
-                if osp.isfile(gif_path):
-                    os.remove(gif_path)
-                
-                # FIXME
-                # duration works very weird so always return 2.0
-                speed = 2.0
-                writeGif(gif_path, frames, duration=1. / sticker.frame_rate * speed, dither=1, dispose=2)
+                if not osp.isfile(gif_path):
+                    images_to_gif(gif_path, framepaths, 1000. / (sticker.frame_rate * speed))
+
                 self.sendLocalImage(rcpt_id, message='', image=gif_path, message_type=msg_type) 
                 sticker.dump(osp.join(folder, 'sticker.json'))
                 self.log('sent to %s, is_group=%d, packid=%s, stickerid=%s' % (rcpt_id, is_group, sticker.pack_id, sticker.sticker_id))
@@ -151,37 +145,45 @@ class StickerBot(fbchat.Client):
 
     def _split_dynamic_sticker(self, sticker, big_path, folder):
         im = Image.open(big_path) 
+
+        # paste the (may be) transparent image on the white bg
+        # if not this, the background sometimes become "black"
+        bg = Image.new('RGBA', im.size, (255,255,255,255))
+        bg.paste(im, (0,0), mask=im)
+        im = bg
+
         w, h = im.size
         n_col = sticker.n_columns
         n_row = sticker.n_rows
         w_split, h_split = w / n_col, h / n_row
         k = 1
-        croppeds = []
         paths = []
         for i in range(n_row):
             for j in range(n_col):
-                left = j * w_split
-                top = i * h_split
-                box = (left, top, left + w_split, top + h_split)
-                s = im.crop(box)
-                mkdir_p(folder)
                 path = osp.join(folder, '%02d.png' % k)
                 if not osp.isfile(path):
+                    left = j * w_split
+                    right = left + w_split
+                    top = i * h_split
+                    bottom = top + h_split
+                    box = (left, top, left + w_split, top + h_split)
+                    s = im.crop(box)
+                    mkdir_p(folder)
                     s.save(path)
 
-                croppeds.append(s)
                 paths.append(path)
                 k += 1
                 if k > sticker.frame_count:
-                    return (paths, croppeds)
+                    return paths 
             
-        
+    
     def log(self, msg):
         if not osp.isfile(self.logfile):
             open(self.logfile, 'w+').close()
         timestr = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(self.logfile, 'a') as f:
             print>>f, '[%s] %s' % (timestr, msg)
+
 
 class Message:
     def __init__(self, mid, author_id, author_name, message, metadata_delta):
@@ -197,8 +199,8 @@ class Message:
         try:
             return self.meta['attachments'][0]['mercury']['attach_type'] == 'sticker'
         except (KeyError, IndexError), e:
-            print 'Message is_sticker() Error:', str(e)
-            print self.meta
+            # print 'Message is_sticker() Error:', str(e)
+            # print self.meta
             pass
         return False
 
