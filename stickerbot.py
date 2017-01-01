@@ -14,6 +14,7 @@ import datetime
 import inspect
 from PIL import Image
 from utils import mkdir_p
+from images_to_gif import images_to_gif
 
 INIT = './stickerbot.ini'
 DEFAULT_SPEED = 2.0
@@ -103,11 +104,13 @@ class StickerBot(fbchat.Client):
             if sticker.dynamic:
                 framepaths = self._split_dynamic_sticker(sticker, big_path, folder)
                 speed = self.user_configs[rcpt_id][1]
-                gif_path = osp.join(folder, 'hey_%f.gif' % speed)
+                method = 'imagemagick'
+                gif_path = osp.join(folder, 'hey_%f_%s.gif' % (speed, method))
                 print 'speed:', speed, ' framerate:', sticker.frame_rate
                 
-                if not osp.isfile(gif_path):
-                    images_to_gif(gif_path, framepaths, 1000. / (sticker.frame_rate * speed))
+                override = False
+                if not osp.isfile(gif_path) or override:
+                    images_to_gif(gif_path, framepaths, 1000. / (sticker.frame_rate * speed), method)
 
                 self.sendLocalImage(rcpt_id, message='', image=gif_path, message_type=msg_type) 
                 sticker.dump(osp.join(folder, 'sticker.json'))
