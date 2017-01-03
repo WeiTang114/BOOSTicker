@@ -5,8 +5,8 @@ import time
 from pprint import pprint
 import threading as th
 import ConfigParser
-import fbchat
 import datetime
+import sys
 import os
 import os.path as osp
 import urllib
@@ -16,6 +16,9 @@ import random
 from PIL import Image
 from utils import mkdir_p
 from images_to_gif import images_to_gif
+
+sys.path.append('./externals/fbchat')
+import fbchat
 
 INIT = './stickerbot.ini'
 DEFAULT_SPEED = 2.0

@@ -4,3 +4,8 @@ stickerbot.ini
 *.swn
 *.swp
 *.pyc
+
+# virtualenv
+bin/
+lib/
+include/
