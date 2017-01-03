@@ -12,6 +12,7 @@ import os.path as osp
 import urllib
 import datetime
 import inspect
+import random
 from PIL import Image
 from utils import mkdir_p
 from images_to_gif import images_to_gif
@@ -29,6 +30,8 @@ class StickerBot(fbchat.Client):
         print 'init: user conig', self.user_configs
 
     def _load_userconfs(self):
+        # TODO
+        # Put all these spaghettis into a class
         d = {}
         if not os.path.exists(self.user_configs_file):
             open(self.user_configs_file, 'w+').close()
@@ -38,22 +41,29 @@ class StickerBot(fbchat.Client):
                 print l.strip()
                 if not l.strip():
                     continue
-                uid, is_group, speed = l.strip().split(',')
+                items = l.strip().split(',')
+                print 'items', items
+                if len(items) == 3:
+                    uid, is_group, speed = items
+                    enabled = True
+                elif len(items) == 4:
+                    uid, is_group, speed, enabled = items
                 is_group = bool(int(is_group))
                 speed = float(speed)
-                d[uid] = [is_group, speed]
+                enabled = bool(int(enabled))
+                d[uid] = [is_group, speed, enabled]
         return d
 
-    def _add_user_config(self, uid, is_group, speed):
-        self.user_configs[uid] = [is_group, speed]
+    def _add_user_config(self, uid, is_group, speed, enabled):
+        self.user_configs[uid] = [is_group, speed, enabled]
         self._write_userconfs()
 
     def _write_userconfs(self):
         print 'write_confs',
         with open(self.user_configs_file, 'w+') as f:
             for uid in self.user_configs:
-                is_group, speed = self.user_configs[uid]
-                print>>f, '%s,%d,%f' % (uid, int(is_group), float(speed))
+                is_group, speed, enabled = self.user_configs[uid]
+                print>>f, '%s,%d,%f,%d' % (uid, int(is_group), float(speed), int(enabled))
 
     def on_message(self, mid, author_id, author_name, message, metadata):
         self.markAsDelivered(author_id, mid) #mark delivered
@@ -90,34 +100,40 @@ class StickerBot(fbchat.Client):
         # parsed = json.loads(msg) 
         # print json.dumps(msg, indent=4, sort_keys=True)
         if not rcpt_id in self.user_configs:
-            self._add_user_config(rcpt_id, is_group, DEFAULT_SPEED)
-
+            self._add_user_config(rcpt_id, is_group, DEFAULT_SPEED, enabled=True)
+            self.send(rcpt_id, '你好。想查詢有什麼功能請打 /help', message_type=msg_type)
+        
+        _, speed, enabled = self.user_configs[rcpt_id]
+        text = msg.text.strip()
         reply = None
 
         if msg.is_sticker():
             print 'is sticker!'
             print msg.sticker.n_columns, msg.sticker.n_rows
 
-            sticker = msg.sticker
-            folder = osp.join('./stickers', sticker.pack_id, sticker.sticker_id)
-            tb_path, big_path = self._get_or_download(sticker, folder)
-            if sticker.dynamic:
-                framepaths = self._split_dynamic_sticker(sticker, big_path, folder)
-                speed = self.user_configs[rcpt_id][1]
-                method = 'imagemagick'
-                gif_path = osp.join(folder, 'hey_%f_%s.gif' % (speed, method))
-                print 'speed:', speed, ' framerate:', sticker.frame_rate
-                
-                override = False
-                if not osp.isfile(gif_path) or override:
-                    images_to_gif(gif_path, framepaths, 1000. / (sticker.frame_rate * speed), method)
+            if enabled:
+                sticker = msg.sticker
+                folder = osp.join('./stickers', sticker.pack_id, sticker.sticker_id)
+                tb_path, big_path = self._get_or_download(sticker, folder)
+                if sticker.dynamic:
+                    framepaths = self._split_dynamic_sticker(sticker, big_path, folder)
+                    speed = self.user_configs[rcpt_id][1]
+                    method = 'imagemagick'
+                    gif_path = osp.join(folder, 'hey_%f_%s.gif' % (speed, method))
+                    print 'speed:', speed, ' framerate:', sticker.frame_rate
+                    
+                    override = False
+                    if not osp.isfile(gif_path) or override:
+                        images_to_gif(gif_path, framepaths, 1000. / (sticker.frame_rate * speed), method)
 
-                self.sendLocalImage(rcpt_id, message='', image=gif_path, message_type=msg_type) 
-                sticker.dump(osp.join(folder, 'sticker.json'))
-                self.log('sent to %s, is_group=%d, packid=%s, stickerid=%s' % (rcpt_id, is_group, sticker.pack_id, sticker.sticker_id))
+                    self.sendLocalImage(rcpt_id, message='', image=gif_path, message_type=msg_type) 
+                    sticker.dump(osp.join(folder, 'sticker.json'))
+                    self.log('sent to %s, is_group=%d, packid=%s, stickerid=%s' % (rcpt_id, is_group, sticker.pack_id, sticker.sticker_id))
+            else:
+                print 'disabled'
 
-        elif msg.text.startswith('speed'):
-            speed = self.user_configs[rcpt_id][1]
+        elif text.lower().startswith('speed') or text.lower().startswith('/speed'):
+            speed, enabled = self.user_configs[rcpt_id][1:3]
             try:
                 if len(msg.text.strip().split()) > 1:
                     arg = msg.text.strip().split()[1]
@@ -127,11 +143,30 @@ class StickerBot(fbchat.Client):
                         speed *= 0.5
                     elif float(arg) != 0:
                         speed = float(arg)
-                self._add_user_config(rcpt_id, is_group, speed)
+                self._add_user_config(rcpt_id, is_group, speed, enabled)
                 reply = '速度: %fX' % speed
             except Exception, e:
                 print str(e)
                 reply = '格式: speed <up/down/0.8>'
+
+        elif text.lower() == '/stop':
+            self._add_user_config(rcpt_id, is_group, speed, False)
+            options = ['我去冬眠嚕。', 'ㄅㄅ。', 'Stop all function. ', '我也累了，請讓我一個人靜一靜。']
+            reply = random.choice(options) + '重新啟動請輸入 /start'
+
+        elif text.lower() == '/start':
+            self._add_user_config(rcpt_id, is_group, speed, True)
+            options = ['啟動！', '讓我們吵吵鬧鬧一輩子吧！', '貼圖加速模式已開啟。', '上工囉。']
+            reply = random.choice(options) + '關閉我請輸入 /stop'
+            
+        elif text.lower() == '/help':
+            reply = """動態貼圖 : 加速
+靜態貼圖 : 沒用
+/start : 啟動
+/stop : 停用
+speed <up/down/2.5> : 加速/減速/設定速度倍數。 (一定倍數以上無效) 
+            """
+
         return reply
     
     def _get_or_download(self, sticker, folder):
