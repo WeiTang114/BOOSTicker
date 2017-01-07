@@ -1,1 +1,1 @@
-worker: stickerbot.py
+worker: python stickerbot.py
