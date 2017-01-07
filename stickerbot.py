@@ -255,15 +255,28 @@ class Sticker:
         mkdir_p(folder)
         with open(info_path, 'w+') as f:
             json.dump(self.__dict__, f, indent=4, sort_keys=True)
-    
+
+
+def load_configs():
+    if 'HEROKU' in os.environ:
+        # on heroku
+        email = os.environ['EMAIL'] 
+        password = os.environ['PASSWORD']
+        logfile = os.environ['LOGFILE']
+    else:
+        # on regular linux
+        config = ConfigParser.ConfigParser()
+        config.read(INIT)
+        
+        email = config.get('Basic', 'email')
+        password = config.get('Basic', 'password')
+        logfile = config.get('Basic', 'logfile')
+
+    return email, password, logfile
+
 
 def main():
-    config = ConfigParser.ConfigParser()
-    config.read(INIT)
-    
-    email = config.get('Basic', 'email')
-    password = config.get('Basic', 'password')
-    logfile = config.get('Basic', 'logfile')
+    email, password, logfile = load_configs()
     bot = StickerBot(email, password, logfile)
 
     # block here: listen to messages
