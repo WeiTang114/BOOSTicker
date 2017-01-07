@@ -16,6 +16,7 @@ import random
 from PIL import Image
 from utils import mkdir_p
 from images_to_gif import images_to_gif
+import user
 
 sys.path.append('./externals/fbchat')
 import fbchat
@@ -33,40 +34,14 @@ class StickerBot(fbchat.Client):
         print 'init: user conig', self.user_configs
 
     def _load_userconfs(self):
-        # TODO
-        # Put all these spaghettis into a class
-        d = {}
-        if not os.path.exists(self.user_configs_file):
-            open(self.user_configs_file, 'w+').close()
-            return d
-        with open(self.user_configs_file, 'r') as f:
-            for l in f:
-                print l.strip()
-                if not l.strip():
-                    continue
-                items = l.strip().split(',')
-                print 'items', items
-                if len(items) == 3:
-                    uid, is_group, speed = items
-                    enabled = True
-                elif len(items) == 4:
-                    uid, is_group, speed, enabled = items
-                is_group = bool(int(is_group))
-                speed = float(speed)
-                enabled = bool(int(enabled))
-                d[uid] = [is_group, speed, enabled]
-        return d
+        return user.load_users(self.user_configs_file)
 
     def _add_user_config(self, uid, is_group, speed, enabled):
-        self.user_configs[uid] = [is_group, speed, enabled]
+        self.user_configs[uid] = user.User(uid, is_group, speed, enabled)
         self._write_userconfs()
 
     def _write_userconfs(self):
-        print 'write_confs',
-        with open(self.user_configs_file, 'w+') as f:
-            for uid in self.user_configs:
-                is_group, speed, enabled = self.user_configs[uid]
-                print>>f, '%s,%d,%f,%d' % (uid, int(is_group), float(speed), int(enabled))
+        return user.write_users(self.user_configs, self.user_configs_file)
 
     def on_message(self, mid, author_id, author_name, message, metadata):
         self.markAsDelivered(author_id, mid) #mark delivered
@@ -106,7 +81,7 @@ class StickerBot(fbchat.Client):
             self._add_user_config(rcpt_id, is_group, DEFAULT_SPEED, enabled=True)
             self.send(rcpt_id, '你好。想查詢有什麼功能請打 /help', message_type=msg_type)
         
-        _, speed, enabled = self.user_configs[rcpt_id]
+        user = self.user_configs[rcpt_id]
         text = msg.text.strip()
         reply = None
 
@@ -114,13 +89,13 @@ class StickerBot(fbchat.Client):
             print 'is sticker!'
             print msg.sticker.n_columns, msg.sticker.n_rows
 
-            if enabled:
+            if user.enabled:
                 sticker = msg.sticker
                 folder = osp.join('./stickers', sticker.pack_id, sticker.sticker_id)
                 tb_path, big_path = self._get_or_download(sticker, folder)
                 if sticker.dynamic:
                     framepaths = self._split_dynamic_sticker(sticker, big_path, folder)
-                    speed = self.user_configs[rcpt_id][1]
+                    speed = user.speed
                     method = 'imagemagick'
                     gif_path = osp.join(folder, 'hey_%f_%s.gif' % (speed, method))
                     print 'speed:', speed, ' framerate:', sticker.frame_rate
@@ -136,7 +111,7 @@ class StickerBot(fbchat.Client):
                 print 'disabled'
 
         elif text.lower().startswith('speed') or text.lower().startswith('/speed'):
-            speed, enabled = self.user_configs[rcpt_id][1:3]
+            speed = user.speed
             try:
                 if len(msg.text.strip().split()) > 1:
                     arg = msg.text.strip().split()[1]
@@ -146,7 +121,7 @@ class StickerBot(fbchat.Client):
                         speed *= 0.5
                     elif float(arg) != 0:
                         speed = float(arg)
-                self._add_user_config(rcpt_id, is_group, speed, enabled)
+                self._add_user_config(rcpt_id, is_group, speed, user.enabled)
                 reply = '速度: %fX' % speed
             except Exception, e:
                 print str(e)
