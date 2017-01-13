@@ -23,6 +23,7 @@ import fbchat
 
 INIT = './stickerbot.ini'
 DEFAULT_SPEED = 2.0
+PENDING_THREAD_DURATION_SEC = 30
 
 class StickerBot(fbchat.Client):
 
@@ -63,6 +64,35 @@ class StickerBot(fbchat.Client):
             replymsg = self._handle(rcpt_id, is_group, msg, msg_type)
             if replymsg:
                 self.send(rcpt_id, replymsg, message_type=msg_type)
+
+    def listen(self, markAlive=True):
+        self.listening = True
+        sticky, pool = self._getSticky()
+
+        if self.debug:
+            print("Listening...")
+
+        last = time.time()
+        while self.listening:
+            try:
+                if markAlive: self.ping(sticky)
+                try:
+                    content = self._pullMessage(sticky, pool)
+                    if content: self._parseMessage(content)
+                    
+                    # only query for pending threads once every N seconds
+                    if time.time() - last > PENDING_THREAD_DURATION_SEC:
+                        pending_threads = self.getThreadList(0, 100, 'pending')
+                        for t in pending_threads:
+                            self._handle_pending_thread(t)
+                        last = time.time()
+
+                except requests.exceptions.RequestException as e:
+                    continue
+            except KeyboardInterrupt:
+                break
+            except requests.exceptions.Timeout:
+                pass
 
     def _is_group(self, msg_metadata):
         if 'otherUserFbId' in msg_metadata['delta']['messageMetadata']['threadKey']:
@@ -192,6 +222,19 @@ speed <up/down/2.5> : 加速/減速/設定速度倍數。 (一定倍數以上無
                 if k > sticker.frame_count:
                     return paths 
             
+
+    def _handle_pending_thread(self, thread):
+        """
+        Pending threads will go into "inbox" thread list and be removed from 
+        "pending" thread list when a message is sent back.
+        """
+        uid = thread.thread_fbid
+        tid = thread.thread_id
+        self.markAsDelivered(uid, tid)
+        self.markAsRead(uid)
+        self._add_user_config(uid, is_group=False, speed=DEFAULT_SPEED, enabled=True)
+        self.send(uid, '你好。想查詢有什麼功能請打 /help')
+
     
     def log(self, msg):
         if not osp.isfile(self.logfile):
