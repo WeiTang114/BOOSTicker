@@ -158,12 +158,12 @@ class StickerBot(fbchat.Client):
                 reply = '格式: speed <up/down/0.8>'
 
         elif text.lower() == '/stop':
-            self._add_user_config(rcpt_id, is_group, speed, False)
+            self._add_user_config(rcpt_id, is_group, user.speed, False)
             options = ['我去冬眠嚕。', 'ㄅㄅ。', 'Stop all function. ', '我也累了，請讓我一個人靜一靜。']
             reply = random.choice(options) + '重新啟動請輸入 /start'
 
         elif text.lower() == '/start':
-            self._add_user_config(rcpt_id, is_group, speed, True)
+            self._add_user_config(rcpt_id, is_group, user.speed, True)
             options = ['啟動！', '讓我們吵吵鬧鬧一輩子吧！', '貼圖加速模式已開啟。', '上工囉。']
             reply = random.choice(options) + '關閉我請輸入 /stop'
             
