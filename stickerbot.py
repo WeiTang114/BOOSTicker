@@ -32,6 +32,7 @@ class StickerBot(fbchat.Client):
         self.logfile = logfile
         self.user_configs_file = './users_confs.txt'
         self.user_configs = self._load_userconfs()
+        self.debug = debug
         print 'init: user conig', self.user_configs
 
     def _load_userconfs(self):
@@ -56,14 +57,13 @@ class StickerBot(fbchat.Client):
         #if you are not the author, echo
         if str(author_id) != str(self.uid):
             is_group = self._is_group(metadata)
-            msg_type = 'group' if is_group else 'user'
             rcpt_id = author_id if not is_group else self._get_threadid(metadata)
 
             msg = Message(mid, author_id, author_name, message, metadata['delta'])
             print 'rcpt_id', rcpt_id, 'is_group', is_group
-            replymsg = self._handle(rcpt_id, is_group, msg, msg_type)
+            replymsg = self._handle(rcpt_id, is_group, msg)
             if replymsg:
-                self.send(rcpt_id, replymsg, message_type=msg_type)
+                self.send(rcpt_id, replymsg, is_user=not is_group)
 
     def listen(self, markAlive=True):
         self.listening = True
@@ -75,7 +75,6 @@ class StickerBot(fbchat.Client):
         last = time.time()
         while self.listening:
             try:
-                if markAlive: self.ping(sticky)
                 try:
                     content = self._pullMessage(sticky, pool)
                     if content: self._parseMessage(content)
@@ -104,12 +103,12 @@ class StickerBot(fbchat.Client):
     def _get_threadid(self, msg_metadata):
         return msg_metadata['delta']['messageMetadata']['threadKey']['threadFbId'] 
 
-    def _handle(self, rcpt_id, is_group, msg, msg_type='user'):
+    def _handle(self, rcpt_id, is_group, msg):
         # parsed = json.loads(msg) 
         # print json.dumps(msg, indent=4, sort_keys=True)
         if not rcpt_id in self.user_configs:
             self._add_user_config(rcpt_id, is_group, DEFAULT_SPEED, enabled=True)
-            self.send(rcpt_id, '你好。想查詢有什麼功能請打 /help', message_type=msg_type)
+            self.send(rcpt_id, '你好。想查詢有什麼功能請打 /help', is_user=not is_group)
         
         user = self.user_configs[rcpt_id]
         text = msg.text.strip()
@@ -134,7 +133,7 @@ class StickerBot(fbchat.Client):
                     if not osp.isfile(gif_path) or override:
                         images_to_gif(gif_path, framepaths, 1000. / (sticker.frame_rate * speed), method)
 
-                    self.sendLocalImage(rcpt_id, message='', image=gif_path, message_type=msg_type) 
+                    self.sendLocalImage(rcpt_id, message='', image=gif_path, is_user=not is_group) 
                     sticker.dump(osp.join(folder, 'sticker.json'))
                     self.log('sent to %s, is_group=%d, packid=%s, stickerid=%s' % (rcpt_id, is_group, sticker.pack_id, sticker.sticker_id))
             else:
