@@ -191,7 +191,7 @@ class StickerBot(fbchat.Client):
             reply = random.choice(options) + '關閉我請輸入 /stop'
 
         elif text.lower() == '/help':
-            reply = """動態貼圖 : 加速
+            reply = """動態貼圖/動態GIF : 加速
 靜態貼圖 : 沒用
 /start : 啟動
 /stop : 停用
