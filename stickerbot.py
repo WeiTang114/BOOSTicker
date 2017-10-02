@@ -22,6 +22,7 @@ import user
 
 sys.path.insert(0, './externals/fbchat')
 import fbchat
+from fbchat.models import ThreadType, FBchatFacebookError
 
 INIT = './stickerbot.ini'
 DEFAULT_SPEED = 2.0
@@ -30,11 +31,12 @@ PENDING_THREAD_DURATION_SEC = 30
 class StickerBot(fbchat.Client):
 
     def __init__(self,email, password, logfile, debug=True, user_agent=None):
-        fbchat.Client.__init__(self,email, password, debug, user_agent)
+        fbchat.Client.__init__(self,email, password)
         self.logfile = logfile
         self.user_configs_file = './users_confs.txt'
         self.user_configs = self._load_userconfs()
         self.debug = debug
+        self.last_check_pending = 0
         print 'init: user conig', self.user_configs
 
     def _load_userconfs(self):
@@ -47,70 +49,88 @@ class StickerBot(fbchat.Client):
     def _write_userconfs(self):
         return user.write_users(self.user_configs, self.user_configs_file)
 
-    def on_message(self, mid, author_id, author_name, message, metadata):
+    def onMessage(self, mid=None, author_id=None, message=None, thread_id=None,
+                  thread_type=ThreadType.USER, ts=None, metadata=None, msg={}):
         self.markAsDelivered(author_id, mid) #mark delivered
         self.markAsRead(author_id) #mark read
 
         print("%s said: %s"%(author_id, message))
 
         print 'meta:'
-        pprint(metadata['delta'])
+        pprint(msg['delta'])
+        meta = msg['delta']
 
         #if you are not the author, echo
         if str(author_id) != str(self.uid):
-            is_group = self._is_group(metadata)
-            rcpt_id = author_id if not is_group else self._get_threadid(metadata)
+            is_group = (thread_type == ThreadType.GROUP)
+            rcpt_id = author_id if not is_group else self._get_threadid(meta)
 
-            msg = Message(mid, author_id, author_name, message, metadata['delta'])
+            msg = Message(mid, author_id, message, meta)
             print 'rcpt_id', rcpt_id, 'is_group', is_group
-            replymsg = self._handle(rcpt_id, is_group, msg)
+            replymsg = self._handle(rcpt_id, thread_type, msg)
             if replymsg:
-                self.send(rcpt_id, replymsg, is_user=not is_group)
+                self.sendMessage(replymsg, rcpt_id, thread_type)
 
-    def listen(self, markAlive=True):
-        self.listening = True
-        sticky, pool = self._getSticky()
+    def doOneListen(self, markAlive=True):
+        """
+        Does one cycle of the listening loop.
+        This method is useful if you want to control fbchat from an external event loop
+        :param markAlive: Whether this should ping the Facebook server before running
+        :type markAlive: bool
+        :return: Whether the loop should keep running
+        :rtype: bool
+        """
+        try:
+            if markAlive:
+                self._ping(self.sticky, self.pool)
+            content = self._pullMessage(self.sticky, self.pool)
+            if content:
+                self._parseMessage(content)
 
-        if self.debug:
-            print("Listening...")
+            # only query for pending threads once every N seconds
+            if time.time() - self.last_check_pending > PENDING_THREAD_DURATION_SEC:
+                # pending_threads = self.getThreadList(0, 100, 'pending')
+                pending_threads = self.fetchThreadList(0, 20, 'pending')
+                for t in pending_threads:
+                    self._handle_pending_thread(t)
+                self.last_check_pending = time.time()
 
-        last = time.time()
-        while self.listening:
-            try:
-                try:
-                    content = self._pullMessage(sticky, pool)
-                    if content: self._parseMessage(content)
+        except KeyboardInterrupt:
+            return False
+        except requests.Timeout:
+            pass
+        except requests.ConnectionError:
+            # If the client has lost their internet connection, keep trying every 30 seconds
+            time.sleep(30)
+        except FBchatFacebookError as e:
+            # Fix 502 and 503 pull errors
+            if e.request_status_code in [502, 503]:
+                self.req_url.change_pull_channel()
+                self.startListening()
+            else:
+                raise e
+        except Exception as e:
+            return self.onListenError(exception=e)
 
-                    # only query for pending threads once every N seconds
-                    if time.time() - last > PENDING_THREAD_DURATION_SEC:
-                        pending_threads = self.getThreadList(0, 100, 'pending')
-                        for t in pending_threads:
-                            self._handle_pending_thread(t)
-                        last = time.time()
-
-                except requests.exceptions.RequestException as e:
-                    continue
-            except KeyboardInterrupt:
-                break
-            except requests.exceptions.Timeout:
-                pass
+        return True
 
     def _is_group(self, msg_metadata):
-        if 'otherUserFbId' in msg_metadata['delta']['messageMetadata']['threadKey']:
+        if 'otherUserFbId' in msg_metadata['messageMetadata']['threadKey']:
             return False
         else:
             # 'threadFbId'
             return True
 
     def _get_threadid(self, msg_metadata):
-        return msg_metadata['delta']['messageMetadata']['threadKey']['threadFbId']
+        return msg_metadata['messageMetadata']['threadKey']['threadFbId']
 
-    def _handle(self, rcpt_id, is_group, msg):
+    def _handle(self, rcpt_id, thread_type, msg):
         # parsed = json.loads(msg)
         # print json.dumps(msg, indent=4, sort_keys=True)
+        is_group = (thread_type == ThreadType.GROUP)
         if not rcpt_id in self.user_configs:
             self._add_user_config(rcpt_id, is_group, DEFAULT_SPEED, enabled=True)
-            self.send(rcpt_id, '你好。想查詢有什麼功能請打 /help', is_user=not is_group)
+            self.sendMessage('你好。想查詢有什麼功能請打 /help', rcpt_id, thread_type)
 
         user = self.user_configs[rcpt_id]
         text = msg.text.strip()
@@ -135,7 +155,7 @@ class StickerBot(fbchat.Client):
                     if not osp.isfile(gif_path) or override:
                         images_to_gif(gif_path, framepaths, 1000. / (sticker.frame_rate * speed), method)
 
-                    self.sendLocalImage(rcpt_id, message='', image=gif_path, is_user=not is_group)
+                    self.sendLocalImage(thread_id=rcpt_id, message='', image_path=gif_path, thread_type=thread_type, is_gif=True)
                     sticker.dump(osp.join(folder, 'sticker.json'))
                     self.log('sent to %s, is_group=%d, packid=%s, stickerid=%s' % (rcpt_id, is_group, sticker.pack_id, sticker.sticker_id))
             else:
@@ -155,7 +175,8 @@ class StickerBot(fbchat.Client):
                 if not osp.isfile(new_gif_path) or override:
                     change_gif_speed(path, new_gif_path, speed)
 
-                self.sendLocalImage(rcpt_id, message='', image=new_gif_path, is_user=not is_group)
+
+                self.sendLocalImage(thread_id=rcpt_id, message='', image_path=new_gif_path, thread_type=thread_type, is_gif=True)
                 gif.dump(osp.join(folder, 'gif.json'))
                 self.log('sent to %s, is_group=%d, gifid=%s' % (rcpt_id, is_group, gif.id))
             else:
@@ -189,6 +210,24 @@ class StickerBot(fbchat.Client):
             self._add_user_config(rcpt_id, is_group, user.speed, True)
             options = ['啟動！', '讓我們吵吵鬧鬧一輩子吧！', '貼圖加速模式已開啟。', '上工囉。']
             reply = random.choice(options) + '關閉我請輸入 /stop'
+
+        elif text.lower().startswith('/give '):
+            try:
+                tokens = text[6:].strip().split(' ', 1)
+                if len(tokens) == 1:
+                    raise ValueError('no "what"')
+                whom = tokens[0].strip()
+                what = tokens[1].strip()
+
+                if whom.lower() == 'me':
+                    whom = 'OK'
+
+                reply = '%s, here you are:\nhttp://lmgtfy.com/?q=%s' % (whom, '+'.join(what.split()))
+
+            except Exception, e:
+                print str(e)
+                traceback.print_exc()
+                reply = '格式: /give <who> <what>'
 
         elif text.lower() == '/help':
             reply = """動態貼圖/動態GIF : 加速
@@ -261,12 +300,11 @@ speed <up/down/2.5> : 加速/減速/設定速度倍數。 (一定倍數以上無
         Pending threads will go into "inbox" thread list and be removed from
         "pending" thread list when a message is sent back.
         """
-        uid = thread.thread_fbid
-        tid = thread.thread_id
-        self.markAsDelivered(uid, tid)
+
+        uid = thread.uid
         self.markAsRead(uid)
         self._add_user_config(uid, is_group=False, speed=DEFAULT_SPEED, enabled=True)
-        self.send(uid, '你好。想查詢有什麼功能請打 /help')
+        self.sendMessage('你好。想查詢有什麼功能請打 /help', uid)
 
 
     def log(self, msg):
@@ -278,10 +316,9 @@ speed <up/down/2.5> : 加速/減速/設定速度倍數。 (一定倍數以上無
 
 
 class Message:
-    def __init__(self, mid, author_id, author_name, message, metadata_delta):
+    def __init__(self, mid, author_id, message, metadata_delta):
         self.mid = mid
         self.author_id = author_id
-        self.author_name = author_name
         self.text = message
         self.meta = metadata_delta
         if self.is_sticker():
@@ -360,6 +397,11 @@ class Gif:
         self.w, self.h = map(int, m['dimensions'].split(','))
         self.id = str(m['fbid'])
 
+    def dump(self, info_path):
+        folder = osp.dirname(info_path)
+        mkdir_p(folder)
+        with open(info_path, 'w+') as f:
+            json.dump(self.__dict__, f, indent=4, sort_keys=True)
 
 def load_configs():
     if 'HEROKU' in os.environ:
