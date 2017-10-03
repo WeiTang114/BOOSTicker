@@ -1,6 +1,9 @@
 # BOOSTicker
 Boost all you FB stickers.
 
+![Dancing Cat 1x](https://raw.githubusercontent.com/weitang114/BOOSTicker/master/images/dancingcat_1x.gif)
+![Dancing Cat 3x](https://raw.githubusercontent.com/weitang114/BOOSTicker/master/images/dancingcat_3x.gif)
+
 # Requirements
 
 - [fbchat](https://github.com/carpedm20/fbchat). 
