@@ -22,7 +22,7 @@ import user
 
 sys.path.insert(0, './externals/fbchat')
 import fbchat
-from fbchat.models import ThreadType, FBchatFacebookError
+from fbchat.models import ThreadType, FBchatFacebookError, ThreadLocation
 
 INIT = './stickerbot.ini'
 DEFAULT_SPEED = 2.0
@@ -89,8 +89,7 @@ class StickerBot(fbchat.Client):
 
             # only query for pending threads once every N seconds
             if time.time() - self.last_check_pending > PENDING_THREAD_DURATION_SEC:
-                # pending_threads = self.getThreadList(0, 100, 'pending')
-                pending_threads = self.fetchThreadList(0, 20, 'pending')
+                pending_threads = self.fetchThreadList(0, 20, ThreadLocation.PENDING)
                 for t in pending_threads:
                     self._handle_pending_thread(t)
                 self.last_check_pending = time.time()
@@ -155,7 +154,7 @@ class StickerBot(fbchat.Client):
                     if not osp.isfile(gif_path) or override:
                         images_to_gif(gif_path, framepaths, 1000. / (sticker.frame_rate * speed), method)
 
-                    self.sendLocalImage(thread_id=rcpt_id, message='', image_path=gif_path, thread_type=thread_type, is_gif=True)
+                    self.sendLocalImage(thread_id=rcpt_id, message='', image_path=gif_path, thread_type=thread_type)
                     sticker.dump(osp.join(folder, 'sticker.json'))
                     self.log('sent to %s, is_group=%d, packid=%s, stickerid=%s' % (rcpt_id, is_group, sticker.pack_id, sticker.sticker_id))
             else:
@@ -176,7 +175,7 @@ class StickerBot(fbchat.Client):
                     change_gif_speed(path, new_gif_path, speed)
 
 
-                self.sendLocalImage(thread_id=rcpt_id, message='', image_path=new_gif_path, thread_type=thread_type, is_gif=True)
+                self.sendLocalImage(thread_id=rcpt_id, message='', image_path=new_gif_path, thread_type=thread_type)
                 gif.dump(osp.join(folder, 'gif.json'))
                 self.log('sent to %s, is_group=%d, gifid=%s' % (rcpt_id, is_group, gif.id))
             else:
@@ -237,6 +236,8 @@ class StickerBot(fbchat.Client):
 speed <up/down/2.5> : 加速/減速/設定速度倍數。 (一定倍數以上無效)
             """
 
+        else: print 'nothing'
+
         return reply
 
     def _get_or_download_sticker(self, sticker, folder):
@@ -262,7 +263,7 @@ speed <up/down/2.5> : 加速/減速/設定速度倍數。 (一定倍數以上無
 
 
     def _split_dynamic_sticker(self, sticker, big_path, folder):
-        im = Image.open(big_path)
+        im = Image.open(big_path).convert('RGBA')
 
         # paste the (may be) transparent image on the white bg
         # if not this, the background sometimes become "black"
@@ -271,6 +272,7 @@ speed <up/down/2.5> : 加速/減速/設定速度倍數。 (一定倍數以上無
         im = bg
 
         w, h = im.size
+        print 'Imagesize:', w, h
         n_col = sticker.n_columns
         n_row = sticker.n_rows
         w_split, h_split = w / n_col, h / n_row
@@ -328,7 +330,7 @@ class Message:
 
     def is_sticker(self):
         try:
-            return self.meta['attachments'][0]['mercury']['attach_type'] == 'sticker'
+            return 'sticker_attachment' in self.meta['attachments'][0]['mercury']
         except (KeyError, IndexError), e:
             # print 'Message is_sticker() Error:', str(e)
             # print self.meta
@@ -337,7 +339,9 @@ class Message:
 
     def is_gif(self):
         try:
-            return self.meta['attachments'][0]['mercury']['attach_type'] == 'animated_image'
+            return self.meta['attachments'][0]['mercury'] \
+                    ['blob_attachment']['__typename'] == 'MessageAnimatedImage'
+
         except (KeyError, IndexError), e:
             # print 'Message is_sticker() Error:', str(e)
             # print self.meta
@@ -346,35 +350,38 @@ class Message:
 
     def sticker_meta(self):
         if not self.is_sticker(): return None
-        return self.meta['attachments'][0]['mercury']['metadata']
+        return self.meta['attachments'][0]['mercury']['sticker_attachment']
 
     def sticker_url(self):
         if not self.is_sticker(): return None
-        return self.meta['attachments'][0]['mercury']['url']
+        return self.sticker_meta()['url']
 
     def gif_meta(self):
         if not self.is_gif(): return None
-        return self.meta['attachments'][0]['mercury']['metadata']
+        return self.meta['attachments'][0]['mercury']['blob_attachment']
 
     def gif_url(self):
         if not self.is_gif(): return None
         # url is None, but preview_url is good
-        return self.meta['attachments'][0]['mercury']['preview_url']
+        return self.gif_meta()['preview_image']['uri']
 
 class Sticker:
     def __init__(self, sticker_meta, sticker_url):
         m = sticker_meta
         self.meta = sticker_meta
         self.static_url = sticker_url
-        self.url = m['spriteURI2x'] or ''
-        self.sticker_id = str(m['stickerID'])
-        self.frame_count = m['frameCount']
-        self.frame_rate = float(m['frameRate'])
-        self.n_columns = m['framesPerRow']
-        self.n_rows = m['framesPerCol']
+        if 'sprite_image_2x' in m:
+            self.url = m['sprite_image_2x']['uri']
+        else:
+            self.url = m['url']
+        self.sticker_id = str(m['id'])
+        self.frame_count = m['frame_count']
+        self.frame_rate = float(m['frame_rate'])
+        self.n_columns = m['frames_per_row']
+        self.n_rows = m['frames_per_column']
         self.w, self.h = m['width'], m['height']
-        self.pack_id = str(m['packID'])
-        self.dynamic = (m['frameCount'] > 1)
+        self.pack_id = str(m['pack']['id'])
+        self.dynamic = (m['frame_count'] > 1)
 
     def __str__(self):
         s = 'id:' + self.sticker_id + '\n'
@@ -394,8 +401,9 @@ class Gif:
         m = gif_meta
         self.meta = gif_meta
         self.url = gif_url
-        self.w, self.h = map(int, m['dimensions'].split(','))
-        self.id = str(m['fbid'])
+        self.w = m['original_dimensions']['x']
+        self.h = m['original_dimensions']['y']
+        self.id = str(m['legacy_attachment_id'])
 
     def dump(self, info_path):
         folder = osp.dirname(info_path)
